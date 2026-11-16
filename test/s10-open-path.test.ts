@@ -91,7 +91,8 @@ async function loadClient(client: Record<string, unknown> = {}): Promise<Registe
         paseo: { workspaces: { list: async () => ({ entries: [], subscription }) } },
         ...client,
       },
-      { get: (target, key) => (key in target ? target[key as keyof typeof target] : record([])) },
+      // Unknown members register, except openFile: without one in `client` this is an app that lacks it.
+      { get: (target, key) => (key in target ? target[key as keyof typeof target] : key === "openFile" ? undefined : record([])) },
     ),
   );
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -125,6 +126,14 @@ describe("S10: open a document by path despite the missing Files-tree hook", () 
     });
     await command!.onSelect({ context: "workspace", workspace: { id: "ws-1" }, rpc, openScreen, openPanel: vi.fn() });
     await vi.waitFor(() => expect(openScreen).toHaveBeenCalledWith({ screenId: "document", params: { workspaceId: "ws-1", path: "build/main.pdf" } }));
+
+    // An app with openFile opens it in a file tab instead.
+    const openFile = vi.fn();
+    const withTabs = await loadClient({ openScreen, openFile });
+    openScreen.mockClear();
+    await withTabs.commands.find((candidate) => candidate.context === "workspace")!.onSelect({ context: "workspace", workspace: { id: "ws-1" }, rpc, openScreen, openPanel: vi.fn() });
+    await vi.waitFor(() => expect(openFile).toHaveBeenCalledWith({ workspaceId: "ws-1", path: "build/main.pdf" }));
+    expect(openScreen).not.toHaveBeenCalled();
   });
 
   it.skipIf(!LUCIDE_ICONS)(

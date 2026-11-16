@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a Paseo app with `openFile` (the qyhfrank Paseo fork; published Paseo has none yet), documents open as normal file tabs, as from the Files tree: turn cards, `/doc`, Open recent document and Documents rows. The tab follows Settings > Layout > Open location, reuses an unmodified preview tab and opens as the closable file sheet on phones, so the chat stays one tab or one swipe away. Images open in Paseo's Image tab. Documents becomes a list that opens tabs, and the Open documents setting and the first-open chooser are hidden; the setting stays in the settings file. A tab opened from a turn card or Documents keeps Previous and Next through their files the viewer shows, and each step replaces the tab while it is unmodified. The plugin looks `openFile` up at runtime, so other Paseo apps keep the behavior below.
+- Without `openFile`, the standalone viewer has Show beside chat on desktop and web, which opens Documents in the explorer reading the same document, and its Previous and Next change the document in place instead of opening a screen per document, so Close returns to the chat in one step. The stepped document's name shows under the header, which keeps the one the viewer was opened with.
 - Pinch on a trackpad to zoom PDF pages, slides and images in the Paseo desktop app and web browsers, around the pointer, as on phones. Ctrl with a mouse wheel zooms the same way, and the browser itself no longer zooms. Plain scrolling is unchanged.
 
 ## 0.8.0 (2026-11-10)

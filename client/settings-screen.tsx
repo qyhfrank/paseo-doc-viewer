@@ -2,6 +2,7 @@ import { useSettings, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { SettingsAction, SettingsCard, SettingsSection, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { Text, View } from "react-native";
 import { viewerSettings } from "../shared/settings";
+import { hostOpensFiles } from "./host-client";
 import { kindColorsSetting } from "./use-kind-colors";
 import { OPEN_OPTIONS, openPreference, type OpenPreference } from "./open-target";
 
@@ -40,14 +41,16 @@ export function ViewerSettings({ theme }: PluginSurfaceProps) {
       </SettingsSection>
       <SettingsSection title="Documents">
         <SettingsCard>
-          <SettingsSelect
+          {/* A host with openFile opens documents as file tabs, placed by its Open location, so the setting
+              stays in the schema but has nothing to choose there. */}
+          {hostOpensFiles() ? null : <SettingsSelect
             label="Open documents"
             hint="On a wide window. Side by side opens Documents next to the chat; Full view opens the standalone viewer. Auto picks side by side from 1,100 pt wide. A Documents panel already on screen always shows the document, and phones always use the standalone viewer."
             value={values.openDocuments ?? "auto"}
             options={OPEN_OPTIONS}
             disabled={settings.saving}
             onValueChange={(openDocuments: OpenPreference) => void saveOpenDocuments(openDocuments)}
-          />
+          />}
           <SettingsSwitch
             label="Color file types"
             hint="File icons take a color per type in Documents and turn cards. Off shows every icon in gray. Applies to every device on this host."

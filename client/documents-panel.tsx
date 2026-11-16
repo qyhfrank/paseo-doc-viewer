@@ -25,6 +25,8 @@ import { siblingWindow } from "./siblings";
 import { TipsCard, TipsLink, useTips } from "./tips-card";
 import { ErrorState, LoadingState, makeStyles, MessageState, StatusPill, statusIcon, type Styles, ToolbarButton } from "./ui";
 import { DocumentScreen } from "./document-screen";
+import { openScreenInputInTab } from "./file-tabs";
+import { openFileOf } from "./host-client";
 import type { PanelReader, PanelSelection } from "./panel-reader";
 import { useBottomInset } from "./use-bottom-inset";
 import { useKindPalette } from "./use-kind-colors";
@@ -67,13 +69,17 @@ function useDebounced<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
-// Documents reads every file in place; the list stays mounted under the reader, so Back finds its filters,
-// view, folders and scroll as they were. Open full view hands the document to the standalone screen.
+// On a host with openFile, Documents is a list that opens each file in a Paseo file tab. Otherwise
+// (COMPAT(viewerOpenFile)) it reads every file in place; the list stays mounted under the reader, so Back
+// finds its filters, view, folders and scroll as they were. Open full view hands the document to the
+// standalone screen.
 export function createDocumentsPanel(openFullView: (input: PluginOpenScreenInput) => void, reader: PanelReader) {
   return function DocumentsPanel(props: PluginWorkspacePanelProps) {
     const { ref, onLayout, bottomInset } = useBottomInset();
     const styles = useMemo(() => makeStyles(props.theme, props.layout.compact, bottomInset), [props.theme, props.layout.compact, bottomInset]);
-    const selection = useSyncExternalStore(reader.subscribe, () => reader.get(props.workspaceId), () => null);
+    const opensTabs = openFileOf(props.navigation) !== null;
+    const read = useSyncExternalStore(reader.subscribe, () => reader.get(props.workspaceId), () => null);
+    const selection = opensTabs ? null : read;
     const [width, setWidth] = useState(0);
     const self = useRef({}).current;
     useEffect(() => () => reader.unmounted(self), [self]);
@@ -82,9 +88,14 @@ export function createDocumentsPanel(openFullView: (input: PluginOpenScreenInput
     const listShown = useRef(false);
     if (!selection) listShown.current = true;
     const open = useCallback((input: PluginOpenScreenInput) => {
+      const openFile = openFileOf(props.navigation);
+      if (openFile) {
+        if (!openScreenInputInTab(openFile, input)) openFullView(input);
+        return;
+      }
       const path = input.params?.path;
       if (path) reader.select(props.workspaceId, { path, siblings: input.params?.siblings });
-    }, [props.workspaceId]);
+    }, [props.workspaceId, props.navigation]);
     const queryClient = useQueryClient();
     // Marks set in the reader (reviewed, opened) show at once, not at the list's next poll.
     const back = () => {

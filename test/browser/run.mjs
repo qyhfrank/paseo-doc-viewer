@@ -917,7 +917,7 @@ try {
     const since = await rpcCallCount();
     await page.getByRole("button", { name: button, exact: true }).click();
     await expect(page.getByText(`Document ${position} of 4`, { exact: true })).toBeVisible();
-    await rpcAnswered(since, "viewer-state.opened", { path: await page.evaluate(() => window.__openedScreen.params.path) });
+    await rpcAnswered(since, "viewer-state.opened");
   };
   await page.getByRole("button", { name: pdfRow }).click();
   await page.getByRole("button", { name: "Find in document", exact: true }).click();
@@ -930,7 +930,17 @@ try {
   await expect(page.getByRole("button", { name: "Next document", exact: true })).toHaveAttribute("aria-disabled", "true");
   await page.getByRole("button", { name: "Previous document", exact: true }).click();
   await expect(page.getByText("Document 3 of 4", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.__openedScreen.params)).toMatchObject({ path: "screenshots/photo.png" });
+  // The screen steps in place, naming the document under the header, which keeps the route's: no route per
+  // document, so Close returns to the chat in one step.
+  await expect(page.locator("main").getByLabel("screenshots/photo.png", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.__openedScreen.params.path)).toBe("reports/quarterly-report-with-a-long-file-name.pdf");
+  // Show beside chat reads the document shown in Documents in the explorer, with its stepper.
+  await page.getByRole("button", { name: "Show beside chat", exact: true }).click();
+  expect(await page.evaluate(() => window.__openedPanel)).toEqual({ id: "documents", workspaceId: "workspace", location: "explorer" });
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await expect(page.locator("main").getByLabel("screenshots/photo.png", { exact: true })).toBeVisible();
+  await expect(page.getByText("Document 3 of 4", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Back to documents", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Turn card", exact: true }).click();
   await expect(page.getByLabel("Opened", { exact: true })).toHaveCount(4);
   await page.getByRole("button", { name: "report.pdf", exact: true }).click();
@@ -968,6 +978,8 @@ try {
   await page.getByRole("button", { name: "Next document", exact: true }).click();
   await expect(page.getByText("Document 2 of 4", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Find in document", exact: true })).toBeVisible();
+  // A phone has no explorer to show it in.
+  await expect(page.getByRole("button", { name: "Show beside chat", exact: true })).toHaveCount(0);
   await page.screenshot({ path: `${shots}/harness-phone-viewer-stepper.png` });
   const collapseShots = process.env.TURN_CARD_COLLAPSE_SHOTS ?? directory;
   await mkdir(collapseShots, { recursive: true });
@@ -1012,7 +1024,7 @@ try {
   await expect(page.getByText("Document 5 of 14", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Previous document", exact: true }).click();
   await expect(page.getByText("Document 4 of 14", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.__openedScreen.params)).toMatchObject({ path: "paseo-doc-viewer-gallery/assets/shot-1.png" });
+  await expect(page.locator("main").getByLabel("paseo-doc-viewer-gallery/assets/shot-1.png", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Checkout card", exact: true }).click();
   await folderToggle(checkoutName).click();
   await folderToggle(checkoutName).click();
@@ -1666,6 +1678,52 @@ try {
   await expect(page.getByText("Note on page 1", { exact: true })).toBeVisible();
   await expect(attachBox).toHaveAttribute("aria-disabled", "true");
   await expect(attachBox).toHaveAttribute("aria-checked", "false");
+  // A host with openFile opens every document in a Paseo file tab: turn cards, Documents, the stepper and
+  // the standalone screen call it, images go to Paseo's Image tab, and nothing asks how documents open.
+  await fetch(`http://127.0.0.1:${port}/settings?openDocuments=unset`);
+  const withOpenFile = (query = "") => `http://127.0.0.1:${port}/?openFile=${encodeURIComponent(root)}${query}`;
+  const openedFiles = () => page.evaluate(() => window.__openedFiles.map((each) => each.path));
+  const routed = () => page.evaluate(() => ({ screen: window.__openedScreen, panel: window.__openedPanel }));
+  const noRoute = { screen: undefined, panel: undefined };
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.goto(withOpenFile());
+  await expect(page.getByRole("button", { name: "Download original", exact: true })).toBeVisible();
+  await expect(page.getByText("How should documents open?", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Turn card", exact: true }).click();
+  await page.getByRole("button", { name: pdfRow }).click();
+  expect(await openedFiles()).toEqual([reportPath]);
+  // The tab steps through the card's documents the viewer shows; the images are Paseo's.
+  await expect(page.getByText("Document 1 of 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("How should documents open?", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Next document", exact: true }).click();
+  await expect(page.getByText("Document 2 of 2", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Previous document", exact: true }).click();
+  await expect(page.getByText("Document 1 of 2", { exact: true })).toBeVisible();
+  expect(await openedFiles()).toEqual([reportPath, "finance/forecast.xlsx", reportPath]);
+  await page.getByRole("button", { name: "Turn card", exact: true }).click();
+  await page.getByRole("button", { name: /^Open screenshots\/photo\.png, / }).click();
+  await expect(page.getByText("Paseo image tab", { exact: true })).toBeVisible();
+  expect((await openedFiles()).at(-1)).toBe("screenshots/photo.png");
+  // Documents is a list that opens tabs, without a reader of its own.
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await page.getByRole("button", { name: /^contract\.docx, / }).click();
+  expect((await openedFiles()).at(-1)).toBe("contract.docx");
+  await expect(page.getByText("Unit", { exact: true })).toBeVisible();
+  for (const chrome of ["Back to documents", "Open full view"]) await expect(page.getByRole("button", { name: chrome, exact: true })).toHaveCount(0);
+  // The standalone screen, which saved links still reach, shows its document beside the chat as a tab.
+  await page.getByRole("button", { name: "statement.pdf", exact: true }).click();
+  await page.getByRole("button", { name: "Show beside chat", exact: true }).click();
+  expect((await openedFiles()).at(-1)).toBe("statement.pdf");
+  expect(await routed()).toEqual(noRoute);
+  // Phones open the file sheet the same way, without the full-screen route.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(withOpenFile("&compact"));
+  await page.getByRole("button", { name: "Turn card", exact: true }).click();
+  await page.getByRole("button", { name: pdfRow }).click();
+  expect(await openedFiles()).toEqual([reportPath]);
+  await expect(page.getByText("Document 1 of 2", { exact: true })).toBeVisible();
+  expect(await routed()).toEqual(noRoute);
+  expect(await page.evaluate(() => document.querySelector("main").scrollWidth)).toBe(390);
   expect(failures).toEqual([]);
-  console.log("Browser checks passed: persisted page/zoom/sheet, Ctrl+wheel pinch zoom with plain wheel scrolling, reset, scoped find shortcut, PDF/Word/grid find navigation, Word table fills its card, cell inspector, record cards, bounded issue check, original-file download bytes, WAV decoding/playback, WebM audio-track playback, visible media/animation/download loading with cancel and navigation, stale-query/cancel/slow-position races, PDF page map (visible-first, at most two thumbnail requests, current page marked, open page, close stops requests), page pins (label, revisit after reopen, may need checking after rewrite, confirm, remove), review marks (explicit only, one button name in both states, Documents status, Needs review and New filters, rewrite race), Documents times read again on focus, New cleared by opening until the file changes, first-run tips (Next, Skip, Done, kept dismissed after reload, reopen, phone fit), review notes (collect, edit, preview, copy, busy preselected agent, stale, send, empty editor moved off a removed slide or page, attach cleared when stale), phone toolbar fit, JSON Lines (named columns, full value and copy, record JSON, invalid-line issues, find), turn card settings link (desktop, 390 px fit, fallback hint), turn card thumbnails, Opened pill and document stepper (desktop, phone row, per-document reset), turn card folder rows (collapsed checkout and new folder, Show and Hide under one name with aria-expanded, thumbnails and stepper only once shown, phone fit), kind colors and their setting, filter chip icons (status and type glyphs, hidden from screen readers, phone scroll, sidebar fit), view switch (beside search, kept per layout class, last press wins over a late answer, phone fit), Details (columns, phone rows), Previews (tiles with page count, rows for other kinds, sidebar rows, phone columns), Tree (folders first, counts, folder chains that stay open when a file splits them, tree items with levels, toggle, Space on rows, Expand all and Collapse all, search opens matches, folder siblings for the stepper, PDFs read in Documents with the stepper and in sidebar width, kept per layout class, sidebar row, phone fit), empty Documents saying what the scan did not reach, every kind read in Documents (sidebar fit, Previous and Next across kinds, Open full view with folder siblings, Back keeps search, type filter, New and Needs review, collapsed headings and scroll), first-open chooser (wide only, 320 pt fit, saved, asked once), open routing (phones full screen, Side by side in the explorer, Auto from 1,100 pt), one toolbar row at 320 pt, Paseo 0.13.0 file panel (PDF and Word by absolute path at phone and 320 pt widths, no chooser or Documents header, outside the workspace, file change notifications, deletion and recovery, symlink retargeting, draft preservation, watcher cleanup, light theme, no whole-file reads or tab writes).");
+  console.log("Browser checks passed: persisted page/zoom/sheet, Ctrl+wheel pinch zoom with plain wheel scrolling, reset, scoped find shortcut, PDF/Word/grid find navigation, Word table fills its card, cell inspector, record cards, bounded issue check, original-file download bytes, WAV decoding/playback, WebM audio-track playback, visible media/animation/download loading with cancel and navigation, stale-query/cancel/slow-position races, PDF page map (visible-first, at most two thumbnail requests, current page marked, open page, close stops requests), page pins (label, revisit after reopen, may need checking after rewrite, confirm, remove), review marks (explicit only, one button name in both states, Documents status, Needs review and New filters, rewrite race), Documents times read again on focus, New cleared by opening until the file changes, first-run tips (Next, Skip, Done, kept dismissed after reload, reopen, phone fit), review notes (collect, edit, preview, copy, busy preselected agent, stale, send, empty editor moved off a removed slide or page, attach cleared when stale), phone toolbar fit, JSON Lines (named columns, full value and copy, record JSON, invalid-line issues, find), turn card settings link (desktop, 390 px fit, fallback hint), turn card thumbnails, Opened pill and document stepper (desktop, phone row, per-document reset), turn card folder rows (collapsed checkout and new folder, Show and Hide under one name with aria-expanded, thumbnails and stepper only once shown, phone fit), kind colors and their setting, filter chip icons (status and type glyphs, hidden from screen readers, phone scroll, sidebar fit), view switch (beside search, kept per layout class, last press wins over a late answer, phone fit), Details (columns, phone rows), Previews (tiles with page count, rows for other kinds, sidebar rows, phone columns), Tree (folders first, counts, folder chains that stay open when a file splits them, tree items with levels, toggle, Space on rows, Expand all and Collapse all, search opens matches, folder siblings for the stepper, PDFs read in Documents with the stepper and in sidebar width, kept per layout class, sidebar row, phone fit), empty Documents saying what the scan did not reach, every kind read in Documents (sidebar fit, Previous and Next across kinds, Open full view with folder siblings, Back keeps search, type filter, New and Needs review, collapsed headings and scroll), first-open chooser (wide only, 320 pt fit, saved, asked once), open routing (phones full screen, Side by side in the explorer, Auto from 1,100 pt), the standalone screen stepping in place and Show beside chat (desktop only), hosts with openFile (turn cards, Documents, the tab stepper and the standalone screen open file tabs, images left to Paseo, no chooser or Documents reader, phones), one toolbar row at 320 pt, Paseo 0.13.0 file panel (PDF and Word by absolute path at phone and 320 pt widths, no chooser or Documents header, outside the workspace, file change notifications, deletion and recovery, symlink retargeting, draft preservation, watcher cleanup, light theme, no whole-file reads or tab writes).");
 } catch (error) { await saveFailure(); throw timedOut ? new Error(overLimit, { cause: error }) : error; } finally { await cleanUp(); }

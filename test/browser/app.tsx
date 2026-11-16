@@ -2,17 +2,18 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PluginFileEvent, PluginFilePanelContribution } from "@getpaseo/plugin/client";
-import { DocumentScreen } from "../../client/document-screen";
 import { createDocumentsPanel } from "../../client/documents-panel";
-import { addFilePanel } from "../../client/file-panel";
+import { addFilePanel, FILE_PANEL_EXTENSIONS } from "../../client/file-panel";
 import { FilePanelReader } from "../../client/file-panel-reader";
 import { setHostClient } from "../../client/host-client";
 import { createDocumentRouting } from "../../client/open-target";
 import { createPanelReader } from "../../client/panel-reader";
 import { ReviewScreen } from "../../client/review-screen";
+import { createDocumentScreen } from "../../client/standalone-screen";
 import { createTurnDocsCard, legacyTurnDocsCard } from "../../client/turn-docs-card";
 import { viewerSettingsRpc } from "../../shared/settings";
-import { callRpc, recordCall } from "./plugin-shim";
+import { extensionOf } from "../../shared/kinds";
+import { callRpc, onOpenFile, openFile, recordCall } from "./plugin-shim";
 const query = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const light = new URLSearchParams(location.search).has("light");
 const theme = { colors: light
@@ -55,8 +56,13 @@ type OpenScreenInput = { screenId: string; params?: Record<string, string> };
 let openScreen = (input: OpenScreenInput) => { (window as any).__openedScreen = input; };
 // Turn cards route like the plugin, with the page as the window. Opening Documents is only recorded:
 // the Documents button shows it, with the document chosen for it.
+// ?openFile=<workspace root> makes the host one with openFile: documents open in a file tab, which the
+// page shows like ?file= does, replaced by the next file the way Paseo replaces an unmodified preview tab.
+const workspaceRoot = new URLSearchParams(location.search).get("openFile");
+const hostOpenFile = workspaceRoot ? openFile : null;
 const reader = createPanelReader();
 const routing = createDocumentRouting({
+  openFile: hostOpenFile,
   openScreen: (input) => openScreen(input),
   openPanel: (id, options) => { (window as any).__openedPanel = { id, ...options }; },
   readSettings: () => callRpc(viewerSettingsRpc.read, {}) as Promise<any>,
@@ -68,6 +74,8 @@ const TurnCard = createTurnDocsCard({
   rpc: callRpc,
 } as any);
 const LegacyTurnCard = legacyTurnDocsCard(TurnCard);
+// The screen the plugin registers. Show beside chat is recorded like routing's explorer opens.
+const StandaloneDocumentScreen = createDocumentScreen(routing.showBesideChat);
 // ?file=<absolute path> mounts the panel the plugin registers with addFilePanel, as a Paseo 0.13.0 file tab
 // does. The viewer watches the handle but reads through its own RPCs; calls on the handle and tab are recorded.
 const fileCalls: string[] = [];
@@ -89,7 +97,7 @@ function pluginFile(path: string) {
     } };
 }
 const filePath = new URLSearchParams(location.search).get("file");
-const file = filePath ? pluginFile(filePath) : null;
+const initialFile = filePath ? pluginFile(filePath) : null;
 const tab = { setModified: (modified: boolean) => fileCalls.push(`setModified(${modified})`), state: undefined, setState: () => fileCalls.push("setState") };
 let filePanel: PluginFilePanelContribution | null = null;
 addFilePanel({ addFilePanel: (contribution: PluginFilePanelContribution) => { filePanel = contribution; return () => {}; } } as any, FilePanelReader);
@@ -104,31 +112,45 @@ function App() {
   const [browsing, setBrowsing] = useState(false);
   const [Panel] = useState(() => createDocumentsPanel((input) => { (window as any).__openedScreen = input; setPath(input.params!.path!); setSiblings(input.params!.siblings); setBrowsing(false); setOpened(true); }, reader));
   const [screen, setScreen] = useState("document");
+  const [file, setFile] = useState(initialFile);
+  useEffect(() => {
+    onOpenFile((opened) => {
+      // Paseo's Image tab shows the images the viewer leaves to it.
+      if (FILE_PANEL_EXTENSIONS.includes(extensionOf(opened))) setFile(pluginFile(`${workspaceRoot}/${opened}`));
+      else setFile(null);
+      setScreen("file-tab");
+      setOpened(true);
+    });
+  }, []);
   useEffect(() => {
     openScreen = (input) => {
       (window as any).__openedScreen = input;
       if (input.screenId === "document" && input.params?.path) { setPath(input.params.path); setSiblings(input.params.siblings); setBrowsing(false); setOpened(true); }
       setScreen(input.screenId);
     };
-    setHostClient({ openScreen } as any);
+    setHostClient((hostOpenFile ? { openScreen, openFile: hostOpenFile } : { openScreen }) as any);
     return () => setHostClient(null);
   }, []);
-  const props = { host: {} as any, theme: theme as any, layout: { compact } as any, navigation: { openAgent: ({ agentId }: { agentId: string }) => { (window as any).__openedAgent = agentId; } } as any };
+  const props = { host: {} as any, theme: theme as any, layout: { compact } as any, navigation: {
+    openAgent: ({ agentId }: { agentId: string }) => { (window as any).__openedAgent = agentId; },
+    ...(hostOpenFile ? { openFile: hostOpenFile } : {}),
+  } as any };
   return <QueryClientProvider client={query}>
     <nav style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>{["statement.pdf", "invoices.xlsx", "contract.docx", "deck.pptx", "tone.wav", "clip.mp4", "audible.webm", "animated.webp", "broken.pdf", "many.csv", "long.pdf", "report.pdf", "forecast.xlsx", "evals.jsonl", ".env"].map((file) => <button key={file} onClick={() => { setPath(file); setSiblings(undefined); setOpened(true); setBrowsing(false); setScreen("document"); }}>{file}</button>)}
       <button onClick={() => { setBrowsing(true); setScreen("document"); }}>Documents</button>
       <button onClick={() => setScreen("turn-card")}>Turn card</button>
       <button onClick={() => setScreen("checkout-card")}>Checkout card</button>
       <button onClick={() => setOpened(!opened)}>{opened ? "Close viewer" : "Reopen viewer"}</button></nav>
-    <main style={{ display: "flex", height: 780, width: frameWidth }}>{file && filePanel && screen !== "review" ? (opened ? <FilePanel panel={filePanel} {...props} workspaceId="workspace" file={file} tab={tab} params={{ path: file.path }} revision={0} /> : null)
+    <main style={{ display: "flex", height: 780, width: frameWidth }}>{screen === "file-tab" && !file ? <p>Paseo image tab</p>
+      : file && filePanel && (screen === "file-tab" || (!workspaceRoot && screen !== "review")) ? (opened ? <FilePanel key={file.path} panel={filePanel} {...props} workspaceId="workspace" file={file} tab={tab} params={{ path: file.path }} revision={0} /> : null)
       : screen === "turn-card"
       ? <div aria-label="Turn card frame" style={{ width: "100%" }}>{turnDocs ? <LegacyTurnCard {...props} agentId="docs" timestamp={new Date(0)} item={{ type: "plugin", kind: "turn-docs", version: 1, data: turnDocs } as any} /> : null}</div>
       : screen === "checkout-card"
       ? <div aria-label="Turn card frame" style={{ width: "100%" }}>{checkoutDocs ? <TurnCard {...props} agentId="docs" timestamp={new Date(0)} item={{ type: "plugin", kind: "turn-docs", version: 2, data: checkoutDocs } as any} /> : null}</div>
       : screen === "review"
       ? <ReviewScreen {...props} params={{ workspaceId: "workspace" }} />
-      : browsing ? <Panel context="workspace" workspaceId="workspace" theme={theme as any} layout={{ compact } as any} {...({} as any)} />
-      : opened ? <DocumentScreen key={siblings ? "turn-card" : path} {...props} params={siblings ? { workspaceId: "workspace", path, siblings } : { workspaceId: "workspace", path }} /> : null}</main>
+      : browsing ? <Panel context="workspace" workspaceId="workspace" theme={theme as any} layout={{ compact } as any} navigation={props.navigation} {...({} as any)} />
+      : opened ? <StandaloneDocumentScreen key={siblings ? "turn-card" : path} {...props} params={siblings ? { workspaceId: "workspace", path, siblings } : { workspaceId: "workspace", path }} /> : null}</main>
   </QueryClientProvider>;
 }
 function FilePanel({ panel, ...props }: { panel: PluginFilePanelContribution } & Record<string, any>) {

@@ -112,12 +112,15 @@ describe("Open documents setting", () => {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function freshRouting(windowWidth: number, read: Read) {
+type OpenFile = (input: { workspaceId: string; path: string }) => void;
+
+async function freshRouting(windowWidth: number, read: Read, openFile: OpenFile | null = null) {
   vi.resetModules();
   const { createDocumentRouting } = await import("../client/open-target");
   const reader = (await import("../client/panel-reader")).createPanelReader();
-  const host = { openScreen: vi.fn(), openPanel: vi.fn(), readSettings: vi.fn(read), windowWidth: () => windowWidth };
-  return { ...createDocumentRouting(host, reader), host, reader };
+  const tabs = await import("../client/file-tabs");
+  const host = { openFile: openFile && vi.fn(openFile), openScreen: vi.fn(), openPanel: vi.fn(), readSettings: vi.fn(read), windowWidth: () => windowWidth };
+  return { ...createDocumentRouting(host, reader), host, reader, tabs };
 }
 
 describe("document routing", () => {
@@ -188,6 +191,52 @@ describe("document routing", () => {
     routing.showDocuments("ws");
     expect(routing.reader.get("ws")).toBeNull();
     expect(routing.host.openPanel).toHaveBeenCalledWith("documents", { workspaceId: "ws" });
+  });
+});
+
+describe("document routing on a host with openFile", () => {
+  const siblings = ["shot.png", "notes.docx", "report.pdf", "data.csv"];
+  const report = documentScreen("ws", "report.pdf", siblings);
+
+  it("opens a file tab for every document, at any width, with no screen, panel or setting read", async () => {
+    for (const [windowWidth, layout] of [[390, { compact: true }], [UNDER, undefined], [1440, undefined]] as const) {
+      const routing = await freshRouting(windowWidth, async () => ready("full"), () => {});
+      routing.reader.measured({}, "ws", 320);
+      routing.openDocument(report, layout);
+      expect(routing.host.openFile).toHaveBeenCalledWith({ workspaceId: "ws", path: "report.pdf" });
+      expect(routing.host.openScreen).not.toHaveBeenCalled();
+      expect(routing.host.openPanel).not.toHaveBeenCalled();
+      expect(routing.host.readSettings).not.toHaveBeenCalled();
+      expect(routing.reader.get("ws")).toBeNull();
+    }
+  });
+
+  it("keeps the documents the tab steps through, leaving out the images Paseo's Image tab shows", async () => {
+    const routing = await freshRouting(1440, async () => ready(), () => {});
+    routing.openDocument(report);
+    expect(routing.tabs.tabSiblingsOf("ws", "report.pdf")).toEqual(["notes.docx", "report.pdf", "data.csv"]);
+    expect(routing.tabs.tabSiblingsOf("other", "report.pdf")).toBeNull();
+    // The last opener of a path wins: /doc and Open recent pass no documents to step through.
+    routing.openDocument(documentScreen("ws", "report.pdf"));
+    expect(routing.tabs.tabSiblingsOf("ws", "report.pdf")).toBeNull();
+    routing.openDocument(documentScreen("ws", "report.pdf", ["shot.png", "report.pdf"]));
+    expect(routing.tabs.tabSiblingsOf("ws", "report.pdf")).toBeNull();
+    routing.openDocument(documentScreen("ws", "shot.png", siblings));
+    expect(routing.host.openFile).toHaveBeenLastCalledWith({ workspaceId: "ws", path: "shot.png" });
+    expect(routing.tabs.tabSiblingsOf("ws", "shot.png")).toBeNull();
+  });
+
+  it("opens a file openFile refuses through the viewer's own routing, and other screens as asked", async () => {
+    const routing = await freshRouting(1440, async () => ready("full"), () => {
+      throw new Error("openFile: Path is not a file inside the workspace");
+    });
+    routing.openDocument(report);
+    await settle();
+    expect(routing.host.openScreen).toHaveBeenCalledWith(report);
+    expect(routing.tabs.tabSiblingsOf("ws", "report.pdf")).toBeNull();
+    const review = { screenId: "review", params: { workspaceId: "ws" } };
+    routing.openDocument(review);
+    expect(routing.host.openScreen).toHaveBeenLastCalledWith(review);
   });
 });
 

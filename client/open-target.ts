@@ -2,7 +2,9 @@ import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
 import type { PluginClientOpenPanelOptions, PluginOpenScreenInput } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { viewerSettings, viewerSettingsRpc } from "../shared/settings";
-import type { PanelReader } from "./panel-reader";
+import { openScreenInputInTab } from "./file-tabs";
+import type { HostOpenFile } from "./host-client";
+import type { PanelReader, PanelSelection } from "./panel-reader";
 import { DOCUMENT_SCREEN_ID, DOCUMENTS_PANEL_ID } from "./recent";
 
 export type OpenPreference = "auto" | "side" | "full";
@@ -110,6 +112,8 @@ export function useOpenChoice(read: ReadSettings): OpenChoice | undefined {
 export type DocumentOpener = (input: PluginOpenScreenInput, layout?: { compact: boolean }) => void;
 
 export interface OpenHost {
+  // Paseo's openFile, or null on hosts without it (COMPAT(viewerOpenFile)).
+  openFile: HostOpenFile | null;
   openScreen(input: PluginOpenScreenInput): void;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
   readSettings: ReadSettings;
@@ -117,8 +121,16 @@ export interface OpenHost {
 }
 
 export function createDocumentRouting(host: OpenHost, reader: PanelReader) {
+  // Documents in the explorer, next to the chat, reading the document.
+  const showBesideChat = (workspaceId: string, selection: PanelSelection) => {
+    reader.select(workspaceId, selection);
+    host.openPanel(DOCUMENTS_PANEL_ID, { workspaceId, location: "explorer" });
+  };
   const openDocument: DocumentOpener = (input, layout) => {
     const { workspaceId, path, siblings } = input.params ?? {};
+    // A host with openFile opens a normal file tab, placed by its Open location, or the file sheet on a
+    // phone. A file it refuses still opens through the viewer's own routing.
+    if (host.openFile && openScreenInputInTab(host.openFile, input)) return;
     if (input.screenId !== DOCUMENT_SCREEN_ID || !workspaceId || !path) {
       host.openScreen(input);
       return;
@@ -127,12 +139,9 @@ export function createDocumentRouting(host: OpenHost, reader: PanelReader) {
     const compact = layout?.compact ?? windowWidth < COMPACT_WINDOW_MAX;
     const route = (known: OpenChoice | undefined) => {
       const target = openTarget({ compact, panelVisible: reader.visible(workspaceId), choice: known, windowWidth });
-      if (target === "screen") {
-        host.openScreen(input);
-      } else {
-        reader.select(workspaceId, { path, siblings });
-        if (target === "explorer") host.openPanel(DOCUMENTS_PANEL_ID, { workspaceId, location: "explorer" });
-      }
+      if (target === "screen") host.openScreen(input);
+      else if (target === "explorer") showBesideChat(workspaceId, { path, siblings });
+      else reader.select(workspaceId, { path, siblings });
     };
     // A phone needs no choice. Elsewhere one already known keeps the press immediate, and the read picks up
     // a change made on another client.
@@ -147,5 +156,5 @@ export function createDocumentRouting(host: OpenHost, reader: PanelReader) {
     reader.select(workspaceId, null);
     host.openPanel(DOCUMENTS_PANEL_ID, { workspaceId });
   };
-  return { openDocument, showDocuments };
+  return { openDocument, showDocuments, showBesideChat };
 }

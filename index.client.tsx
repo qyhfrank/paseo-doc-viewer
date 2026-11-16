@@ -3,13 +3,13 @@ import { Dimensions } from "react-native";
 import { createDocumentRouting, type DocumentOpener } from "./client/open-target";
 import { viewerSettingsRpc } from "./shared/settings";
 import { createPanelReader } from "./client/panel-reader";
-import { DocumentScreen } from "./client/document-screen";
+import { createDocumentScreen } from "./client/standalone-screen";
 import { documentTitle } from "./client/format";
 import { createDocumentsPanel } from "./client/documents-panel";
 import { addFilePanel } from "./client/file-panel";
 import { FilePanelReader } from "./client/file-panel-reader";
 import { addDocumentsHeaderButtons } from "./client/header-button";
-import { setHostClient } from "./client/host-client";
+import { openFileOf, setHostClient } from "./client/host-client";
 import { DOCUMENT_SCREEN_ID, DOCUMENTS_PANEL_ID, openByPath, openMostRecent, SETTINGS_SCREEN_ID } from "./client/recent";
 import { REVIEW_SCREEN_ID, reviewScreen } from "./client/review-note";
 import { ReviewScreen } from "./client/review-screen";
@@ -20,14 +20,15 @@ import { TURN_DOCS_KIND, turnDocsSchema, turnDocsV1Schema } from "./shared/turn-
 export default function contribute(client: PluginClientContext) {
   setHostClient(client);
   const reader = createPanelReader();
-  const { openDocument, showDocuments } = createDocumentRouting({
+  const { openDocument, showDocuments, showBesideChat } = createDocumentRouting({
+    openFile: openFileOf(client),
     openScreen: (input) => client.openScreen(input),
     openPanel: (id, options) => client.openPanel(id, options),
     readSettings: () => client.rpc(viewerSettingsRpc.read, {}),
     windowWidth: () => Dimensions.get("window").width,
   }, reader);
   const cleanups = [
-    client.addScreen({ id: DOCUMENT_SCREEN_ID, title: documentTitle, Component: DocumentScreen }),
+    client.addScreen({ id: DOCUMENT_SCREEN_ID, title: documentTitle, Component: createDocumentScreen(showBesideChat) }),
     client.addCommandCenterItem({
       id: "open-recent-document",
       title: "Open recent document",

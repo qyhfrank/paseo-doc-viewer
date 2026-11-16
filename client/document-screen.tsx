@@ -21,20 +21,23 @@ import { useOpenedMark, useViewerMarks } from "./use-viewer-marks";
 import { type DocumentReview, reviewStatus } from "./review";
 import { MediaViewer } from "./media-viewer";
 import { kindForPath } from "../shared/kinds";
-import { openHostScreen } from "./host-client";
+import { hostOpensFiles, openHostScreen } from "./host-client";
 import { documentScreen } from "./recent";
 import { parseSiblings, type SiblingPosition, siblingPosition } from "./siblings";
 import { emptyNotePage, reviewDrafts, reviewScope, reviewUnit, useReviewDraft } from "./review-draft";
 import { NoteComposer, reviewScreen } from "./review-note";
 import { OpenChooser } from "./open-chooser";
 
-// The Documents panel embeds this screen and passes its own opener, so stepping stays in the panel.
-// `phone` is the host's layout; the panel passes a compact layout for its narrow widths too.
-// A Paseo file tab passes `chooser={false}`: Paseo opened the file, so how documents open does not apply.
-export function DocumentScreen({ host, theme, layout, params, openDocument: open = openHostScreen, phone = layout.compact, chooser = true }: Pick<PluginScreenProps, "host" | "theme" | "layout" | "params"> & {
+// The Documents panel, a Paseo file tab and the standalone screen pass their own opener, so stepping
+// stays where the reader is. `phone` is the host's layout; the panel passes a compact layout for its
+// narrow widths too. A Paseo file tab passes `chooser={false}`: Paseo opened the file, so how documents
+// open does not apply, and neither does it on a host with openFile, whose Open location places tabs.
+// `besideChat` adds Show beside chat to the toolbar.
+export function DocumentScreen({ host, theme, layout, params, openDocument: open = openHostScreen, phone = layout.compact, chooser = true, besideChat }: Pick<PluginScreenProps, "host" | "theme" | "layout" | "params"> & {
   openDocument?: (input: PluginOpenScreenInput) => void;
   phone?: boolean;
   chooser?: boolean;
+  besideChat?: () => void;
 }) {
   const { ref, onLayout, bottomInset } = useBottomInset();
   const styles = useMemo(() => makeStyles(theme, layout.compact, bottomInset, phone), [theme, layout.compact, bottomInset, phone]);
@@ -101,12 +104,12 @@ export function DocumentScreen({ host, theme, layout, params, openDocument: open
   } else {
     body = (
       <DocumentBody key={documentKey} document={opened.data} workspaceId={workspaceId} path={path} password={password} compact={layout.compact}
-        reviewScope={reviewScope(host?.id, workspaceId)} stepper={stepper} theme={theme} styles={styles} />
+        reviewScope={reviewScope(host?.id, workspaceId)} stepper={stepper} besideChat={besideChat} theme={theme} styles={styles} />
     );
   }
   return (
     <View ref={ref} onLayout={onLayout} style={{ flex: 1 }}>
-      {phone || !chooser ? null : <OpenChooser theme={theme} styles={styles} />}
+      {phone || !chooser || hostOpensFiles() ? null : <OpenChooser theme={theme} styles={styles} />}
       {body}
     </View>
   );
@@ -163,7 +166,7 @@ function ViewerContent({
   }
 }
 
-function DocumentBody({ reviewScope: scope, stepper, ...props }: Parameters<typeof ViewerContent>[0] & { reviewScope: string; stepper: ReactNode }) {
+function DocumentBody({ reviewScope: scope, stepper, besideChat, ...props }: Parameters<typeof ViewerContent>[0] & { reviewScope: string; stepper: ReactNode; besideChat?: () => void }) {
   const unit = props.document.kind === "pptx" ? "slide" : "page";
   const noteCount = props.document.kind === "pptx" ? props.document.slideCount : props.document.kind === "pdf" ? props.document.pageCount : 0;
   const [finding, setFinding] = useState(false);
@@ -209,6 +212,8 @@ function DocumentBody({ reviewScope: scope, stepper, ...props }: Parameters<type
       accessibilityLabel={`Review notes (${draft.notes.length})`} onPress={() => openHostScreen(reviewScreen(props.workspaceId))} /> : null}
     {marks.ready ? <MarkReviewed marks={marks} status={review} revision={props.document.revision} labeled={labels} theme={props.theme} styles={props.styles} /> : null}
     <DownloadOriginal workspaceId={props.workspaceId} path={props.path} theme={props.theme} styles={props.styles} labeled={labels} />
+    {besideChat ? <ToolbarButton theme={props.theme} styles={props.styles} icon="PanelRight" label={labels ? "Show beside chat" : undefined}
+      accessibilityLabel="Show beside chat" onPress={besideChat} /> : null}
   </>;
   return <FindScope enabled={searchable} onFind={() => { if (searchable) setFinding(true); }}>
     <View style={props.styles.screen}>
